@@ -2,13 +2,43 @@ import express from "express";
 import cors from "cors";
 import { MongoClient, ObjectId, ServerApiVersion } from "mongodb";
 import "dotenv/config";
+import jwt from "jsonwebtoken";
+import cookieParser from "cookie-parser";
 
 const app = express();
 
 const port = process.env.PORT || 5000;
+const secret = process.env.ACCESS_TOKEN_SECRET;
 
-app.use(cors());
+app.use(
+  cors({
+    origin: ["http://localhost:5173"],
+    credentials: true,
+  })
+);
 app.use(express.json());
+app.use(cookieParser());
+
+// middleware
+const logger = async (req, res, next) => {
+  next();
+};
+
+const verifyToken = async (req, res, next) => {
+  const token = req.cookies?.token;
+
+  if (!token) {
+    return res.status(401).send({ message: "unauthorized access" });
+  }
+  jwt.verify(token, process.env.ACCESS_TOKEN_SECRET, (err, decoded) => {
+    if (err) {
+      return res.status(401).send({ message: "unauthorized access" });
+    }
+
+    req.user = decoded;
+    next();
+  });
+};
 
 const user = process.env.DB_user;
 const password = process.env.DB_pass;
@@ -32,7 +62,21 @@ async function run() {
     const serviceCollection = client.db("car-genius").collection("services");
     const bookingCollection = client.db("car-genius").collection("booking");
 
-    app.get("/services", async (req, res) => {
+    // auth API
+    app.post("/jwt", logger, async (req, res) => {
+      const user = req.body;
+
+      const token = jwt.sign(user, secret, { expiresIn: "1h" });
+      res
+        .cookie("token", token, {
+          httpOnly: true,
+          secure: false,
+        })
+        .send({ success: true });
+    });
+
+    // service api
+    app.get("/services", logger, async (req, res) => {
       const cursor = serviceCollection.find();
 
       const result = await cursor.toArray();
@@ -40,7 +84,7 @@ async function run() {
       res.send(result);
     });
 
-    app.get("/services/:id", async (req, res) => {
+    app.get("/services/:id", logger, async (req, res) => {
       const id = req.params.id;
       const query = { _id: new ObjectId(id) };
 
@@ -57,31 +101,34 @@ async function run() {
       res.send(result);
     });
 
-    app.post("/bookings", async (req, res) => {
+    app.post("/bookings", logger, async (req, res) => {
       const booking = req.body;
 
       const result = await bookingCollection.insertOne(booking);
       res.send(result);
     });
 
-    app.get("/bookings", async (req, res) => {
+    app.get("/bookings", logger, verifyToken, async (req, res) => {
       let query = {};
       if (req.query?.email) {
         query = { email: req.query.email };
+      }
+      if (req.query.email !== req.user.email) {
+        return res.status(403).send({ message: "forbidden" });
       }
       const result = await bookingCollection.find(query).toArray();
 
       res.send(result);
     });
 
-    app.delete("/bookings/:id", async (req, res) => {
+    app.delete("/bookings/:id", logger, async (req, res) => {
       const id = req.params.id;
       const query = { _id: new ObjectId(id) };
       const result = await bookingCollection.deleteOne(query);
       res.send(result);
     });
 
-    app.patch("/bookings/:id", async (req, res) => {
+    app.patch("/bookings/:id", logger, async (req, res) => {
       const updatedBody = req.body;
       const id = req.params.body;
       const filter = { _id: new ObjectId(id) };
@@ -97,9 +144,6 @@ async function run() {
 
     // Send a ping to confirm a successful connection
     await client.db("admin").command({ ping: 1 });
-    console.log(
-      "Pinged your deployment. You successfully connected to MongoDB!"
-    );
   } finally {
     // Ensures that the client will close when you finish/error
     // await client.close();
@@ -111,6 +155,4 @@ app.get("/", (req, res) => {
   res.send("server running");
 });
 
-app.listen(port, () => {
-  console.log("server running at ", port);
-});
+app.listen(port, () => {});
