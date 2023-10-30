@@ -66,13 +66,20 @@ async function run() {
     app.post("/jwt", logger, async (req, res) => {
       const user = req.body;
 
-      const token = jwt.sign(user, secret, { expiresIn: "1h" });
+      const token = jwt.sign(user, secret, { expiresIn: "10h" });
       res
         .cookie("token", token, {
           httpOnly: true,
-          secure: false,
+          secure: true,
+          sameSite: "none",
         })
         .send({ success: true });
+    });
+
+    app.post("/logout", async (req, res) => {
+      const user = req.body;
+      console.log("logout", user);
+      res.clearCookie("token", { maxAge: 0 }).send({ success: true });
     });
 
     // service api
